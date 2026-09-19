@@ -16,8 +16,10 @@ override a subagent's model at call time).
   bypasses the `task` tool and uses the opencode SDK directly
   (`session.create({ parentID })` + `session.prompt({ agent, model })`),
   which *does* accept an explicit model override. It takes either a `tier`
-  name (expands to a ranked model list with automatic fallback) or an
-  explicit ranked `models` list, plus an optional usability `probe`.
+  name (a pool of equivalent models) or an explicit `models` list; one
+  candidate is picked **at random**, briefly probed for usability with the
+  internal `ping` agent (disable with `probe: false`), and the rest serve
+  as fallbacks in random order.
 - **The scheduler** is a primary agent that triages, decomposes, dispatches
   lite-first, integrates, and sends every non-trivial change through a
   reviewer. It never writes code itself (`edit: deny`), and the plain `task`
@@ -26,21 +28,22 @@ override a subagent's model at call time).
 
 ## Model tiers
 
-Each tier is a ranked list; `subagent_dispatch` tries entries in order and
-falls back on failure. Defined in the plugin's `defaults.tiers` (overridable
-via plugin options) and mirrored in `scheduler.md`.
+Each tier is a pool; `subagent_dispatch` picks a random entry, probes it,
+and falls back to the rest on failure. Defined in the plugin's
+`defaults.tiers` (overridable via plugin options) and mirrored in
+`scheduler.md`.
 
-| Tier | Rough cost | Models, best first |
+| Tier | Rough cost | Model pool (random pick) |
 |---|---|---|
-| **premium** | ~10× | `kimi-code-plan-cn/k3` → `openai/gpt-6-astra` → `openai/gpt-5.6-sol` → `claude-code/claude-fable-5` |
-| **plus** | ~3× | `openai/gpt-5.6-terra` → `claude-code/claude-sonnet-5` |
-| **regular** | ~1× | `openai/gpt-5.6-luna` → `minimax-cn-coding-plan/MiniMax-M3` → `claude-code/claude-haiku-4-5` |
+| **premium** | ~10× | `kimi-code-plan-cn/k3`, `openai/gpt-6-astra`, `openai/gpt-5.6-sol` |
+| **plus** | ~3× | `openai/gpt-5.6-terra`, `kimi-code-plan-cn/kimi-for-coding` |
+| **regular** | ~1× | `openai/gpt-5.6-luna`, `minimax-cn-coding-plan/MiniMax-M3` |
 
-`claude-code/...` entries sit last in every tier deliberately: sessions on
-the claude-code provider cannot see custom plugin tools (its bridge exposes
-only a fixed proxy set), so a spawn-capable agent that lands on a Claude
-fallback works solo instead of sub-delegating. Keep the scheduler on a
-natively-provided model.
+`claude-code/...` models are excluded from every pool: sessions on the
+claude-code provider cannot see custom plugin tools (its bridge exposes
+only a fixed proxy set), so a spawn-capable agent landing there could not
+sub-delegate. Use them only via an explicit `models` list when asked. Keep
+the scheduler on a natively-provided model.
 
 ## The roster
 

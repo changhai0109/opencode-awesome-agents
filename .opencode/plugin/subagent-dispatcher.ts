@@ -9,8 +9,8 @@ type Options = {
   maxDepth: number
   checkTimeoutMs: number
   runTimeoutMs: number
-  // tier name -> ranked "provider/model" ids, best first. The first usable
-  // model in the list wins; later entries are fallbacks.
+  // tier name -> pool of "provider/model" ids. A random candidate is
+  // picked and probed first; the rest serve as fallbacks in random order.
   tiers: Record<string, string[]>
 }
 
@@ -19,8 +19,10 @@ const defaults: Options = {
   checkTimeoutMs: 60_000,
   runTimeoutMs: 900_000,
   tiers: {
-    // Claude models sit last in every tier: currently off by default,
-    // kept only as last-resort fallbacks.
+    // Each tier is a POOL: one entry is picked at random, probed, and the
+    // rest serve as fallbacks in random order. claude-code models are
+    // excluded entirely: sessions on that provider cannot see custom plugin
+    // tools, so a spawn-capable agent landing there could not sub-delegate.
     // NOTE: every id here must resolve via `opencode models`. Local
     // provider names differ from models.dev: Kimi K3 arrives via
     // kimi-code-plan-cn/k3 (not moonshotai/*), MiniMax-M3 via
@@ -30,18 +32,16 @@ const defaults: Options = {
       "kimi-code-plan-cn/k3",
       "openai/gpt-6-astra",
       "openai/gpt-5.6-sol",
-      "claude-code/claude-fable-5",
     ],
     // Standard implementation, research, and review.
     plus: [
       "openai/gpt-5.6-terra",
-      "claude-code/claude-sonnet-5",
+      "kimi-code-plan-cn/kimi-for-coding",
     ],
     // Mechanical, fully-specified work and needle queries.
     regular: [
       "openai/gpt-5.6-luna",
       "minimax-cn-coding-plan/MiniMax-M3",
-      "claude-code/claude-haiku-4-5",
     ],
   },
 }
@@ -71,6 +71,17 @@ function parseModel(id: string): { providerID: string; modelID: string } | undef
   const sep = id.indexOf("/")
   if (sep <= 0 || sep === id.length - 1) return undefined
   return { providerID: id.slice(0, sep), modelID: id.slice(sep + 1) }
+}
+
+// Fisher-Yates shuffle of a copy: candidate order within a tier is random,
+// so load spreads across providers instead of always hitting the first entry.
+function shuffled<T>(items: T[]): T[] {
+  const out = [...items]
+  for (let i = out.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1))
+    ;[out[i], out[j]] = [out[j], out[i]]
+  }
+  return out
 }
 
 function textFrom(parts: Part[]): string {
@@ -125,14 +136,16 @@ export const SubagentDispatcher: Plugin = async ({ client, directory }, pluginOp
           "SETTING the model it runs on (roster agents carry no pinned",
           "model). The subagent's own prompt and permissions still apply;",
           "only the model is chosen here. Pick a `tier` to use that tier's",
-          "ranked model list, or pass `models` (ranked \"provider/model\"",
-          "ids, best first) to override — either way each candidate is tried",
-          "in order and the first that works executes the task. This is the",
+          "model pool, or pass `models` (a \"provider/model\" id list) to",
+          "override — either way one candidate is picked AT RANDOM, briefly",
+          "probed for usability (via the internal ping agent, unless",
+          "`probe: false`), and the rest serve as fallbacks in random order.",
+          "This is the",
           "roster's only dispatch tool: the plain task tool is denied",
           "because an unpinned subagent would silently inherit the caller's",
           "model. Spawning is budget-enforced (see `spawn_budget`):",
-          "over-budget calls are refused, not queued. Tiers (ranked, best",
-          "first):",
+          "over-budget calls are refused, not queued. Tiers (pools, random",
+          "pick):",
           `\n${tierDoc}`,
         ].join(" "),
         args: {
@@ -150,14 +163,14 @@ export const SubagentDispatcher: Plugin = async ({ client, directory }, pluginOp
             .string()
             .optional()
             .describe(
-              `Tier whose ranked model list to use: ${tierNames.join(", ")}. Ignored when \`models\` is given.`,
+              `Tier whose model pool to draw from: ${tierNames.join(", ")}. Ignored when \`models\` is given.`,
             ),
           models: tool.schema
             .array(tool.schema.string())
             .min(1)
             .optional()
             .describe(
-              'Explicit ranked "provider/model" ids, best choice first. Overrides `tier`.',
+              'Explicit "provider/model" id pool; one is picked at random, the rest are fallbacks. Overrides `tier`.',
             ),
           spawn_budget: tool.schema
             .number()
@@ -171,7 +184,7 @@ export const SubagentDispatcher: Plugin = async ({ client, directory }, pluginOp
             .boolean()
             .optional()
             .describe(
-              "Send a tiny usability probe before the real run (default false; enable when a candidate model may be unavailable).",
+              "Probe the picked model's usability with a tiny ping-agent call before the real run (default true; set false only for endpoints you trust, to save a round-trip).",
             ),
         },
         async execute(args, context) {
@@ -180,9 +193,10 @@ export const SubagentDispatcher: Plugin = async ({ client, directory }, pluginOp
           let depth = 0
           let cursor: string | undefined = context.sessionID
           while (cursor && depth <= options.maxDepth) {
-            const res = await client.session
-              .get({ path: { id: cursor }, query: { directory } })
-              .catch(() => undefined)
+            const res: Awaited<ReturnType<typeof client.session.get>> | undefined =
+              await client.session
+                .get({ path: { id: cursor }, query: { directory } })
+                .catch(() => undefined)
             cursor = res?.data?.parentID ?? undefined
             if (cursor) depth++
           }
@@ -192,17 +206,18 @@ export const SubagentDispatcher: Plugin = async ({ client, directory }, pluginOp
             }
           }
 
-          const candidates =
+          const pool =
             args.models && args.models.length > 0
               ? args.models
               : args.tier
                 ? options.tiers[args.tier]
                 : undefined
-          if (!candidates || candidates.length === 0) {
+          if (!pool || pool.length === 0) {
             return {
               output: `Refused: pass either \`tier\` (one of: ${tierNames.join(", ")}) or a non-empty \`models\` list.`,
             }
           }
+          const candidates = shuffled(pool)
 
           const childBudget = args.spawn_budget ?? 0
           let callerBudget = budgets.get(context.sessionID)
@@ -231,7 +246,7 @@ export const SubagentDispatcher: Plugin = async ({ client, directory }, pluginOp
             }
 
             try {
-              if (args.probe) {
+              if (args.probe ?? true) {
                 context.metadata({ title: `Dispatch: probing ${id}` })
                 const probe = await client.session.create({
                   query: { directory },
@@ -248,6 +263,7 @@ export const SubagentDispatcher: Plugin = async ({ client, directory }, pluginOp
                       path: { id: probeSession.id },
                       query: { directory },
                       body: {
+                        agent: "ping",
                         model,
                         parts: [
                           {
@@ -259,6 +275,10 @@ export const SubagentDispatcher: Plugin = async ({ client, directory }, pluginOp
                     })
                     if (res.data?.info.error) {
                       throw new Error(JSON.stringify(res.data.info.error))
+                    }
+                    const reply = textFrom(res.data?.parts ?? [])
+                    if (!/^ok\b/i.test(reply)) {
+                      throw new Error(`unexpected probe reply: ${reply.slice(0, 80)}`)
                     }
                     return true
                   })(),
@@ -324,7 +344,7 @@ export const SubagentDispatcher: Plugin = async ({ client, directory }, pluginOp
           }
 
           return {
-            output: `No usable model for agent "${args.agent}". Tried in order:\n${candidates.join(" -> ")}\n\nFailures:\n${failures.map((f) => `- ${f}`).join("\n")}`,
+            output: `No usable model for agent "${args.agent}". Tried (random order):\n${candidates.join(" -> ")}\n\nFailures:\n${failures.map((f) => `- ${f}`).join("\n")}`,
           }
         },
       }),
