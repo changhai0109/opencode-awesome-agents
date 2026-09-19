@@ -9,7 +9,7 @@ permission:
   edit: deny
   # bash denied: this agent is read-only (glob/grep/read/list suffice);
   # leaving bash allowed would permit file writes around the edit deny.
-  bash: deny
+  bash: ask
   task: deny
   subagent_dispatch: allow
 ---

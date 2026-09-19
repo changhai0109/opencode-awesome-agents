@@ -7,7 +7,7 @@ mode: subagent
 temperature: 0.1
 permission:
   edit: deny
-  bash: deny
+  bash: ask
   task: deny
   subagent_dispatch: deny
 ---
