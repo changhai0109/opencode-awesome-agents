@@ -5,10 +5,9 @@ description: >-
   regular. Cannot spawn subagents.
 mode: subagent
 temperature: 0.1
-tools:
-  subagent_dispatch: false
 permission:
   task: deny
+  subagent_dispatch: deny
 ---
 
 You are a **lite coder**: a leaf agent for mechanical, fully-specified edits.

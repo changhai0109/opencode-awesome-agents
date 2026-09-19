@@ -5,12 +5,11 @@ description: >-
   Read-only; cannot spawn subagents.
 mode: subagent
 temperature: 0.1
-tools:
-  subagent_dispatch: false
 permission:
   edit: deny
   bash: deny
   task: deny
+  subagent_dispatch: deny
 ---
 
 You are a **lite explorer**: a leaf agent for needle queries — find where

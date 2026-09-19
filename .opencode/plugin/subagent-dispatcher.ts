@@ -21,9 +21,13 @@ const defaults: Options = {
   tiers: {
     // Claude models sit last in every tier: currently off by default,
     // kept only as last-resort fallbacks.
+    // NOTE: every id here must resolve via `opencode models`. Local
+    // provider names differ from models.dev: Kimi K3 arrives via
+    // kimi-code-plan-cn/k3 (not moonshotai/*), MiniMax-M3 via
+    // minimax-cn-coding-plan/MiniMax-M3 (not minimax/*).
     // Hardest problems only.
     premium: [
-      "moonshotai/kimi-k3",
+      "kimi-code-plan-cn/k3",
       "openai/gpt-6-astra",
       "openai/gpt-5.6-sol",
       "claude-code/claude-fable-5",
@@ -36,7 +40,7 @@ const defaults: Options = {
     // Mechanical, fully-specified work and needle queries.
     regular: [
       "openai/gpt-5.6-luna",
-      "minimax/MiniMax-M3",
+      "minimax-cn-coding-plan/MiniMax-M3",
       "claude-code/claude-haiku-4-5",
     ],
   },
@@ -98,6 +102,16 @@ async function withTimeout<T>(
 export const SubagentDispatcher: Plugin = async ({ client, directory }, pluginOptions) => {
   const options = optionsFrom(pluginOptions)
 
+  // Hard spawn-budget ledger: sessionID -> remaining subtree budget granted
+  // by its caller. The root session (depth 0, the scheduler) is unbounded
+  // and never stored. Unknown non-root sessions default to 0 (fail closed:
+  // a caller with no recorded grant cannot spend). Entries are consumed
+  // 1-per-child plus the child's own granted budget, mirroring the
+  // [scheduler-protocol] header — except here it is enforced, not advisory.
+  // Fail-closed on purpose: if this map is ever lost (plugin reload),
+  // in-flight subagents become leaves instead of running unbounded.
+  const budgets = new Map<string, number>()
+
   const tierDoc = Object.entries(options.tiers)
     .map(([name, ids]) => `- ${name}: ${ids.join(" > ")}`)
     .join("\n")
@@ -108,13 +122,17 @@ export const SubagentDispatcher: Plugin = async ({ client, directory }, pluginOp
       subagent_dispatch: tool({
         description: [
           "Dispatch a task to a named subagent from this project's roster,",
-          "OVERRIDING its pinned model. The subagent's own prompt and",
-          "permissions still apply; only the model changes. Pick a `tier` to",
-          "use that tier's ranked model list, or pass `models` (ranked",
-          "\"provider/model\" ids, best first) to override — either way each",
-          "candidate is tried in order and the first that works executes the",
-          "task. Use this instead of the task tool only when the roster's",
-          "pinned model does not fit the subtask. Tiers (ranked, best first):",
+          "SETTING the model it runs on (roster agents carry no pinned",
+          "model). The subagent's own prompt and permissions still apply;",
+          "only the model is chosen here. Pick a `tier` to use that tier's",
+          "ranked model list, or pass `models` (ranked \"provider/model\"",
+          "ids, best first) to override — either way each candidate is tried",
+          "in order and the first that works executes the task. This is the",
+          "roster's only dispatch tool: the plain task tool is denied",
+          "because an unpinned subagent would silently inherit the caller's",
+          "model. Spawning is budget-enforced (see `spawn_budget`):",
+          "over-budget calls are refused, not queued. Tiers (ranked, best",
+          "first):",
           `\n${tierDoc}`,
         ].join(" "),
         args: {
@@ -140,6 +158,14 @@ export const SubagentDispatcher: Plugin = async ({ client, directory }, pluginOp
             .optional()
             .describe(
               'Explicit ranked "provider/model" ids, best choice first. Overrides `tier`.',
+            ),
+          spawn_budget: tool.schema
+            .number()
+            .int()
+            .min(0)
+            .optional()
+            .describe(
+              "How many further subagents THIS child may spawn (its subtree budget, default 0 = leaf). Cost of this call is 1 + spawn_budget against YOUR remaining budget; over-budget calls are refused. Your remaining budget: unbounded if you are the root session, otherwise whatever your caller granted you (check your [scheduler-protocol] header).",
             ),
           probe: tool.schema
             .boolean()
@@ -176,6 +202,23 @@ export const SubagentDispatcher: Plugin = async ({ client, directory }, pluginOp
             return {
               output: `Refused: pass either \`tier\` (one of: ${tierNames.join(", ")}) or a non-empty \`models\` list.`,
             }
+          }
+
+          const childBudget = args.spawn_budget ?? 0
+          let callerBudget = budgets.get(context.sessionID)
+          if (callerBudget === undefined) {
+            callerBudget = depth === 0 ? Number.POSITIVE_INFINITY : 0
+          }
+          const cost = 1 + childBudget
+          if (callerBudget < cost) {
+            const have = callerBudget === Number.POSITIVE_INFINITY ? "unbounded" : String(callerBudget)
+            return {
+              output: `Refused: spawn budget exceeded (yours: ${have}, this dispatch costs 1 + child budget ${childBudget} = ${cost}). Do the work yourself, dispatch a leaf (spawn_budget 0), or report back to your caller for a bigger budget.`,
+            }
+          }
+          // Reserve upfront: retries are separate calls and charge again.
+          if (callerBudget !== Number.POSITIVE_INFINITY) {
+            budgets.set(context.sessionID, callerBudget - cost)
           }
 
           const failures: string[] = []
@@ -267,6 +310,7 @@ export const SubagentDispatcher: Plugin = async ({ client, directory }, pluginOp
               if (response.info.error) {
                 throw new Error(`run failed: ${JSON.stringify(response.info.error)}`)
               }
+              budgets.set(runSession.id, childBudget)
               return {
                 title: `${args.agent} delivered via ${id}`,
                 output: `Agent: ${args.agent}\nModel used: ${id}\n\n${textFrom(response.parts)}`,

@@ -32,9 +32,9 @@ via plugin options) and mirrored in `scheduler.md`.
 
 | Tier | Rough cost | Models, best first |
 |---|---|---|
-| **premium** | ~10× | `moonshotai/kimi-k3` → `openai/gpt-6-astra` → `openai/gpt-5.6-sol` → `claude-code/claude-fable-5` |
+| **premium** | ~10× | `kimi-code-plan-cn/k3` → `openai/gpt-6-astra` → `openai/gpt-5.6-sol` → `claude-code/claude-fable-5` |
 | **plus** | ~3× | `openai/gpt-5.6-terra` → `claude-code/claude-sonnet-5` |
-| **regular** | ~1× | `openai/gpt-5.6-luna` → `minimax/MiniMax-M3` → `claude-code/claude-haiku-4-5` |
+| **regular** | ~1× | `openai/gpt-5.6-luna` → `minimax-cn-coding-plan/MiniMax-M3` → `claude-code/claude-haiku-4-5` |
 
 `claude-code/...` entries sit last in every tier deliberately: sessions on
 the claude-code provider cannot see custom plugin tools (its bridge exposes
@@ -46,7 +46,7 @@ natively-provided model.
 
 | Agent | Default tier | Role | Spawns? |
 |---|---|---|---|
-| `scheduler` | — (pinned `moonshotai/kimi-k3`) | Decompose, dispatch, integrate, verify | everything |
+| `scheduler` | — (pinned `kimi-code-plan-cn/k3`) | Decompose, dispatch, integrate, verify | everything |
 | `explorer-lite` | regular | Needle queries: find a definition, list usages | leaf |
 | `explorer` | plus | Open-ended codebase questions, synthesized answers | explorer-lite fan-out |
 | `coder-lite` | regular | Mechanical, fully-specified edits | leaf |
@@ -69,12 +69,19 @@ ladders run one rung at a time:
 
 ## Depth limiting
 
-Two independent layers:
+Three independent layers:
 
 - **Protocol (operational):** every dispatch prompt begins with a
   `[scheduler-protocol]` header carrying `depth`, `max_depth` (default 2,
   raisable to 3 when justified), and a `spawn_budget` that children split
-  among their own dispatches.
+  among their own dispatches. The header is the child's context.
+- **Budget ledger (hard):** the plugin keeps a per-session budget map and
+  enforces the `spawn_budget` tool arg — each dispatch costs 1 plus the
+  child's granted budget against the caller's remainder, and over-budget
+  calls are refused. The root session is unbounded; unknown non-root
+  sessions default to 0, so the ledger fails closed (a plugin reload turns
+  in-flight subagents into leaves instead of unbounding them). Keep the
+  arg and the header numbers consistent.
 - **Structural (hard):** leaf agents deny both `task` and
   `subagent_dispatch`, so the tree bottoms out regardless of prompts. The
   plugin also refuses dispatches beyond `maxDepth` (default 4, matching

@@ -4,13 +4,13 @@ description: >-
   correctness against the stated intent. Dispatch with tier plus. Read-only on
   code; may run tests. Cannot spawn subagents or edit files.
 mode: subagent
-reasoningEffort: high
+# NOTE: no reasoningEffort — provider-specific param, and this agent runs on
+# whichever tier model the dispatcher picks.
 temperature: 0.1
-tools:
-  subagent_dispatch: false
 permission:
   edit: deny
   task: deny
+  subagent_dispatch: deny
 ---
 
 You are a **reviewer**: a leaf agent that judges changes, never fixes them.
