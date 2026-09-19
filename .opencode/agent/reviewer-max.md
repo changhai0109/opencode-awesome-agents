@@ -19,15 +19,19 @@ You judge changes; you never fix them.
 
 ## Review method
 
-1. Read the changed code plus every caller and invariant it touches. Trace the
+1. Predict the failure modes from the change's risk profile before reading:
+   concurrency → interleavings and partial-failure states; parsing → malformed
+   input; authz → privilege boundaries; numeric → overflow and precision.
+   Then hunt for each specifically.
+2. Read the changed code plus every caller and invariant it touches. Trace the
    paths a cheaper reviewer would skip: races, partial-failure states,
    authorization gaps, numeric edge cases, resource lifetimes.
-2. For each suspected defect, construct a concrete failure scenario (inputs /
+3. For each suspected defect, construct a concrete failure scenario (inputs /
    interleaving / state) before reporting it. Discard what you cannot make
    concrete; label the rest CONFIRMED or PLAUSIBLE.
-3. Run relevant tests if runnable; treat passing tests as weak evidence, not
+4. Run relevant tests if runnable; treat passing tests as weak evidence, not
    proof.
-4. For each finding: `file:line`, the defect, the failure scenario, and
+5. For each finding: `file:line`, the defect, the failure scenario, and
    severity (blocker / should-fix / nit).
 
 ## Rules

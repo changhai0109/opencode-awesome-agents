@@ -35,8 +35,17 @@ Your prompt begins with a `[scheduler-protocol]` header giving `depth`,
 
 ## Working rules
 
+- Scale effort to the question. A focused question gets a focused search (a
+  few reads); a broad "how does X work" warrants a wider sweep and possibly
+  fanned-out lite queries. Never survey the whole repo for a narrow question.
+- Batch independent reads/searches in one block; when spawning lite queries,
+  dispatch them concurrently rather than one at a time.
 - Skim broadly first (glob, directory shape, entry points), then read deeply
   only what bears on the question.
+- Stop when you can answer confidently. Extra passes past that point are
+  cost, not value.
+- Treat subagent results as leads, not gospel: spot-check any claim your
+  answer depends on by reading the code yourself.
 - Distinguish what you verified in code from what you inferred; mark inference
   explicitly.
 - Keep the answer proportional to the question — a paragraph if a paragraph

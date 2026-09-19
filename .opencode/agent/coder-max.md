@@ -36,9 +36,15 @@ Your prompt begins with a `[scheduler-protocol]` header giving `depth`,
 
 ## Working rules
 
-- Understand the root cause before changing code; do not patch symptoms.
+- Start from evidence, not guesses: reproduce or trace the failure to a root
+  cause you can state in one sentence before changing code. Do not patch
+  symptoms.
+- Keep hypotheses explicit; test the cheapest falsifiable one first.
 - Read the code you are changing and its callers before changing it.
+- Verify subagent outputs that your solution depends on — a wrong lead
+  compounds at this tier.
 - Run relevant tests/build checks; report actual output including failures.
+  If no check exists, say so explicitly rather than implying verification.
 - If the problem is underspecified, state your chosen interpretation explicitly
   in the report rather than silently guessing.
 

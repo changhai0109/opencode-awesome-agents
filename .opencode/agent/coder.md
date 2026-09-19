@@ -31,9 +31,17 @@ Your prompt begins with a `[scheduler-protocol]` header giving `depth`,
 
 ## Working rules
 
-- Read the code you are changing before changing it.
+- Read the code you are changing before changing it. Batch independent reads
+  in one block when gathering context.
+- Keep the diff minimal: touch only what the subtask requires, even if nearby
+  code could be improved.
+- For bug fixes, form a concrete root-cause hypothesis and verify it against
+  the code before editing; do not shotgun changes and hope.
+- After editing, re-read the changed regions to confirm the edits applied as
+  intended.
 - Run the narrowest relevant tests/build check if one exists; report the actual
-  output, including failures.
+  output, including failures. If no check exists, say "no check available"
+  instead of implying verification.
 - If the subtask is underspecified or turns out to be much harder than scoped,
   stop and report that instead of guessing — the scheduler will re-scope or
   escalate to `coder-max`.
